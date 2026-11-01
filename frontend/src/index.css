@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-brand-50 text-slate-800 antialiased;
+}
+
+@layer components {
+  .pill-input {
+    @apply flex items-center gap-3 rounded-full border border-brand-200 bg-white px-4 py-2.5 transition focus-within:border-brand-700 focus-within:ring-2 focus-within:ring-brand-700/15;
+  }
+  .primary-button {
+    @apply rounded-full bg-brand-800 font-semibold tracking-wide text-white transition hover:bg-brand-900 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+}
