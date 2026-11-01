@@ -5,6 +5,9 @@ from chat import views
 urlpatterns = [
     path("auth/register/", views.RegisterView.as_view(), name="register"),
     path("auth/login/", views.LoginView.as_view(), name="login"),
+    path("auth/logout/", views.LogoutView.as_view(), name="logout"),
+    path("auth/ws-ticket/", views.WebSocketTicketView.as_view(), name="ws-ticket"),
+    path("health/", views.HealthView.as_view(), name="health"),
     path("users/me/", views.MeView.as_view(), name="me"),
     path("users/online/", views.OnlineUsersView.as_view(), name="online-users"),
     path("rooms/", views.RoomListCreateView.as_view(), name="rooms"),

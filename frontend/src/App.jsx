@@ -8,6 +8,7 @@ import Sidebar from "./components/Sidebar.jsx";
 const TOKEN_STORAGE_KEY = "chat.token";
 const ROOM_STORAGE_KEY = "chat.activeRoomId";
 const ROOM_REFRESH_MS = 15000;
+const SESSION_RETRY_MS = 3000;
 
 // localStorage can throw in private mode or when storage is blocked
 const storage = {
@@ -35,22 +36,37 @@ export default function App() {
   const [activeRoomId, setActiveRoomId] = useState(() => Number(storage.get(ROOM_STORAGE_KEY)) || null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isRestoringSession, setIsRestoringSession] = useState(Boolean(token));
+  const [sessionCheckAttempt, setSessionCheckAttempt] = useState(0);
 
   const logout = useCallback(() => {
+    // Revoke the token server-side; local state is cleared regardless of the result
+    if (token) api.logout(token).catch(() => {});
     storage.set(TOKEN_STORAGE_KEY, null);
     setToken(null);
     setUser(null);
     setRooms([]);
-  }, []);
+  }, [token]);
 
+  // Only a 401 ends the session; network errors (offline, server restarting) are retried
   useEffect(() => {
-    if (!token || user) return;
+    if (!token || user) return undefined;
+    let retryTimer;
     api
       .me(token)
-      .then(setUser)
-      .catch(logout)
-      .finally(() => setIsRestoringSession(false));
-  }, [token, user, logout]);
+      .then((currentUser) => {
+        setUser(currentUser);
+        setIsRestoringSession(false);
+      })
+      .catch((error) => {
+        if (error.status === 401) {
+          logout();
+          setIsRestoringSession(false);
+        } else {
+          retryTimer = setTimeout(() => setSessionCheckAttempt((attempt) => attempt + 1), SESSION_RETRY_MS);
+        }
+      });
+    return () => clearTimeout(retryTimer);
+  }, [token, user, logout, sessionCheckAttempt]);
 
   const refreshRooms = useCallback(async () => {
     try {
@@ -128,6 +144,7 @@ export default function App() {
             token={token}
             user={user}
             onOpenSidebar={() => setIsSidebarOpen(true)}
+            onUnauthorized={logout}
           />
         ) : (
           <div className="flex h-full flex-col">

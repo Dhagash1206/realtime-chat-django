@@ -1,4 +1,7 @@
 import json
+import logging
+import time
+from collections import deque
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -8,16 +11,27 @@ from chat import presence
 from chat.models import Connection, Message, Room
 from chat.serializers import MessageSerializer
 
+logger = logging.getLogger(__name__)
+
 CLOSE_UNAUTHORIZED = 4401
 CLOSE_ROOM_NOT_FOUND = 4404
 
 
 class ChatConsumer(AsyncJsonWebsocketConsumer):
+    joined = False
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # Also runs when a handler raises, so a crashed socket never leaves a ghost "online" user
+            await self.leave_room()
+
     async def connect(self):
         self.user = self.scope["user"]
         self.room_id = self.scope["url_route"]["kwargs"]["room_id"]
         self.group_name = f"room_{self.room_id}"
-        self.joined = False
+        self.recent_send_times = deque()
 
         if not self.user.is_authenticated:
             await self.close(code=CLOSE_UNAUTHORIZED)
@@ -28,8 +42,8 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
 
         # Checked before registering, so a second tab doesn't announce the user twice
         was_already_in_room = await self.is_user_in_room()
-        await self.register_connection()
         await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.register_connection()
         self.joined = True
         await self.accept()
 
@@ -38,34 +52,68 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             await self.broadcast_presence("user_joined")
 
     async def disconnect(self, code):
+        await self.leave_room()
+
+    async def leave_room(self):
+        """Idempotent: called on normal disconnect and again from __call__'s cleanup."""
         if not self.joined:
             return
-        await self.unregister_connection()
-        await self.channel_layer.group_discard(self.group_name, self.channel_name)
-        if not await self.is_user_in_room():
-            await self.broadcast_presence("user_left")
+        self.joined = False
+        try:
+            await self.unregister_connection()
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+            if not await self.is_user_in_room():
+                await self.broadcast_presence("user_left")
+        except Exception:
+            logger.exception("Cleanup failed for connection %s in room %s", self.channel_name, self.room_id)
+
+    async def receive(self, text_data=None, bytes_data=None, **kwargs):
+        # The base class raises on binary or empty frames, which would tear down the socket
+        if not text_data:
+            await self.send_error("Send messages as JSON text frames")
+            return
+        await super().receive(text_data=text_data, **kwargs)
 
     @classmethod
     async def decode_json(cls, text_data):
         try:
             return json.loads(text_data)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
             return None
+
+    def is_rate_limited(self):
+        """Sliding-window limit on messages per socket, to stop one client flooding a room."""
+        now = time.monotonic()
+        window_start = now - settings.CHAT_RATE_LIMIT_WINDOW_SECONDS
+        while self.recent_send_times and self.recent_send_times[0] < window_start:
+            self.recent_send_times.popleft()
+        if len(self.recent_send_times) >= settings.CHAT_RATE_LIMIT_MESSAGES:
+            return True
+        self.recent_send_times.append(now)
+        return False
 
     async def receive_json(self, content, **kwargs):
         text = content.get("content") if isinstance(content, dict) else None
         text = text.strip() if isinstance(text, str) else ""
         if not text:
-            await self.send_json({"type": "error", "detail": 'Send JSON like {"content": "hello"}'})
+            await self.send_error('Send JSON like {"content": "hello"}')
             return
         if len(text) > settings.CHAT_MAX_MESSAGE_LENGTH:
-            await self.send_json(
-                {"type": "error", "detail": f"Message exceeds {settings.CHAT_MAX_MESSAGE_LENGTH} characters"}
-            )
+            await self.send_error(f"Message exceeds {settings.CHAT_MAX_MESSAGE_LENGTH} characters")
+            return
+        if self.is_rate_limited():
+            await self.send_error("You're sending messages too fast. Slow down.")
             return
 
-        message_data = await self.save_message(text)
-        await self.channel_layer.group_send(self.group_name, {"type": "chat.message", "message": message_data})
+        try:
+            message_data = await self.save_message(text)
+            await self.channel_layer.group_send(self.group_name, {"type": "chat.message", "message": message_data})
+        except Exception:
+            logger.exception("Failed to deliver message in room %s", self.room_id)
+            await self.send_error("Message could not be sent. Please try again.")
+
+    async def send_error(self, detail):
+        await self.send_json({"type": "error", "detail": detail})
 
     # Group event handlers: "chat.message" is dispatched to chat_message, etc.
     async def chat_message(self, event):

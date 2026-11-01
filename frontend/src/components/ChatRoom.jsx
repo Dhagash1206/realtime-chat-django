@@ -19,8 +19,9 @@ const STATUS_STYLES = {
   closed: { label: "Reconnecting…", dot: "bg-red-500 animate-pulse" },
 };
 
-export default function ChatRoom({ room, token, user, onOpenSidebar }) {
+export default function ChatRoom({ room, token, user, onOpenSidebar, onUnauthorized }) {
   const [items, setItems] = useState([]);
+  const [hasLoadedHistory, setHasLoadedHistory] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [hasOlder, setHasOlder] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -40,6 +41,7 @@ export default function ChatRoom({ room, token, user, onOpenSidebar }) {
       return [...history.map(toMessageItem), ...arrivedSinceFetch];
     });
     setHasOlder(history.length === PAGE_SIZE);
+    setHasLoadedHistory(true);
   }, [room.id, token]);
 
   const handleSocketEvent = useCallback(
@@ -47,7 +49,9 @@ export default function ChatRoom({ room, token, user, onOpenSidebar }) {
       switch (event.type) {
         case "presence":
           setOnlineUsers(event.online_users);
-          loadLatest().catch(() => setErrorNotice("Couldn't load message history"));
+          loadLatest().catch((error) =>
+            error.status === 401 ? onUnauthorized() : setErrorNotice("Couldn't load message history")
+          );
           break;
         case "message":
           setItems((previousItems) =>
@@ -71,10 +75,15 @@ export default function ChatRoom({ room, token, user, onOpenSidebar }) {
           break;
       }
     },
-    [loadLatest, user.id]
+    [loadLatest, onUnauthorized, user.id]
   );
 
-  const { status, sendMessage } = useChatSocket({ roomId: room.id, token, onEvent: handleSocketEvent });
+  const { status, sendMessage } = useChatSocket({
+    roomId: room.id,
+    token,
+    onEvent: handleSocketEvent,
+    onUnauthorized,
+  });
 
   useEffect(() => {
     if (!errorNotice) return undefined;
@@ -96,8 +105,9 @@ export default function ChatRoom({ room, token, user, onOpenSidebar }) {
       const olderMessages = await api.roomMessages(token, room.id, oldestMessage.id);
       setItems((previousItems) => [...olderMessages.map(toMessageItem), ...previousItems]);
       setHasOlder(olderMessages.length === PAGE_SIZE);
-    } catch {
-      setErrorNotice("Couldn't load older messages");
+    } catch (error) {
+      if (error.status === 401) onUnauthorized();
+      else setErrorNotice("Couldn't load older messages");
     } finally {
       setLoadingOlder(false);
     }
@@ -149,6 +159,7 @@ export default function ChatRoom({ room, token, user, onOpenSidebar }) {
 
         <MessageList
           items={items}
+          isLoading={!hasLoadedHistory}
           currentUserId={user.id}
           hasOlder={hasOlder}
           loadingOlder={loadingOlder}

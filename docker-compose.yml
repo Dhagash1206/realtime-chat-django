@@ -14,7 +14,10 @@ services:
     image: redis:7-alpine
 
   web:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_DEV: "true"
     env_file: .env
     ports:
       - "8000:8000"
@@ -32,7 +35,9 @@ services:
              python manage.py runserver 0.0.0.0:8000"
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: dev
     environment:
       BACKEND_HOST: web:8000
     ports:

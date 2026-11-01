@@ -23,6 +23,7 @@ export async function apiRequest(path, { token, method = "GET", body } = {}) {
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (response.status === 204) return null;
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(describeError(data), response.status);
   return data;
@@ -31,6 +32,8 @@ export async function apiRequest(path, { token, method = "GET", body } = {}) {
 export const api = {
   register: (credentials) => apiRequest("/auth/register/", { method: "POST", body: credentials }),
   login: (credentials) => apiRequest("/auth/login/", { method: "POST", body: credentials }),
+  socketTicket: (token) => apiRequest("/auth/ws-ticket/", { token, method: "POST" }),
+  logout: (token) => apiRequest("/auth/logout/", { token, method: "POST" }),
   me: (token) => apiRequest("/users/me/", { token }),
   listRooms: (token) => apiRequest("/rooms/", { token }),
   createRoom: (token, name) => apiRequest("/rooms/", { token, method: "POST", body: { name } }),

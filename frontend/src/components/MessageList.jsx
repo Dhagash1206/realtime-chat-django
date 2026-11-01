@@ -54,7 +54,7 @@ function MessageRow({ message, isOwn, showHeader }) {
   );
 }
 
-export default function MessageList({ items, currentUserId, hasOlder, loadingOlder, onLoadOlder }) {
+export default function MessageList({ items, isLoading, currentUserId, hasOlder, loadingOlder, onLoadOlder }) {
   const scrollRef = useRef(null);
   const isNearBottomRef = useRef(true);
   const previousRef = useRef({ firstKey: null, lastKey: null, scrollHeight: 0 });
@@ -104,7 +104,11 @@ export default function MessageList({ items, currentUserId, hasOlder, loadingOld
         </div>
       )}
 
-      {items.length === 0 && (
+      {items.length === 0 && isLoading && (
+        <div className="flex h-full items-center justify-center text-sm text-slate-400">Loading messages…</div>
+      )}
+
+      {items.length === 0 && !isLoading && (
         <div className="flex h-full flex-col items-center justify-center text-center text-slate-500">
           <p className="text-lg font-semibold text-brand-900">No messages yet</p>
           <p className="text-sm">Say hello and get the conversation started.</p>

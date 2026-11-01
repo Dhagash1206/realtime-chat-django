@@ -1,0 +1,12 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+!.env.prod.example
+frontend
+staticfiles
+**/__pycache__
+**/*.pyc
+.vscode
+.pytest_cache

@@ -2,25 +2,25 @@ from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
 from channels.middleware import BaseMiddleware
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
-from rest_framework.authtoken.models import Token
+
+from chat.authentication import redeem_websocket_ticket
 
 
 @database_sync_to_async
-def get_user_for_token(token_key):
-    try:
-        return Token.objects.select_related("user").get(key=token_key).user
-    except Token.DoesNotExist:
+def get_user_for_ticket(ticket):
+    user_id = redeem_websocket_ticket(ticket)
+    if user_id is None:
         return AnonymousUser()
+    return get_user_model().objects.filter(pk=user_id, is_active=True).first() or AnonymousUser()
 
 
-class TokenAuthMiddleware(BaseMiddleware):
-    """Authenticates WebSockets via ?token=<key>, since browsers can't set
-    an Authorization header on a WebSocket handshake."""
+class WebSocketTicketAuthMiddleware(BaseMiddleware):
+    """Authenticates WebSockets via ?ticket=<ticket> from POST /api/auth/ws-ticket/."""
 
     async def __call__(self, scope, receive, send):
-        query_params = parse_qs(scope["query_string"].decode())
-        token_key = query_params.get("token", [None])[0]
-        if token_key:
-            scope["user"] = await get_user_for_token(token_key)
-        return await super().__call__(scope, receive, send)
+        query_params = parse_qs(scope["query_string"].decode("latin-1"))
+        ticket = query_params.get("ticket", [None])[0]
+        user = await get_user_for_ticket(ticket) if ticket else AnonymousUser()
+        return await super().__call__({**scope, "user": user}, receive, send)

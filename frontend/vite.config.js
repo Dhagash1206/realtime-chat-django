@@ -11,7 +11,6 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": { target: `http://${backendHost}`, changeOrigin: true },
-      "/admin": { target: `http://${backendHost}`, changeOrigin: true },
       "/ws": { target: `ws://${backendHost}`, ws: true, changeOrigin: true },
     },
   },

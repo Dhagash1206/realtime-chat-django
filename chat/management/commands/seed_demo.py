@@ -1,7 +1,8 @@
 import os
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from chat.models import Message, Room
 
@@ -19,7 +20,12 @@ DEMO_CONVERSATION = [
 class Command(BaseCommand):
     help = "Create demo users, rooms and messages for local development."
 
+    def add_arguments(self, parser):
+        parser.add_argument("--force", action="store_true", help="Allow running with DEBUG off")
+
     def handle(self, *args, **options):
+        if not settings.DEBUG and not options["force"]:
+            raise CommandError("Refusing to create demo users with DEBUG off (use --force to override)")
         password = os.environ.get("DEMO_PASSWORD", "demo-pass-123")
         User = get_user_model()
 

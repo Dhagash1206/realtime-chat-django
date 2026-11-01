@@ -1,0 +1,79 @@
+# Rendered at container start by the nginx image's envsubst step; only ${TRUSTED_PROXY_CIDR} is substituted.
+
+# Resolve "web" through Docker's DNS at request time, so a restarted or scaled backend
+# (new container IPs) doesn't leave nginx proxying to a dead address
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# Keep the scheme reported by an upstream TLS terminator; otherwise use our own
+map $http_x_forwarded_proto $forwarded_proto {
+    default $http_x_forwarded_proto;
+    ''      $scheme;
+}
+
+server {
+    listen 80;
+    server_name _;
+    server_tokens off;
+    client_max_body_size 1m;
+
+    # Only a trusted load balancer may report the client IP. Everyone else's X-Forwarded-For is
+    # ignored, and the header is rewritten below, so clients can't spoof IPs to dodge rate limits.
+    set_real_ip_from ${TRUSTED_PROXY_CIDR};
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    set $django_upstream http://web:8000;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    root /usr/share/nginx/html;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $forwarded_proto;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok";
+    }
+
+    location /ws/ {
+        proxy_pass $django_upstream;
+        proxy_http_version 1.1;
+        # Setting any proxy_set_header here discards the server-level ones, so all are repeated
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+
+    # Django adds its own security headers to these responses
+    location ~ ^/(api|admin|static)/ {
+        proxy_pass $django_upstream;
+    }
+
+    # Vite emits content-hashed filenames, so these can be cached forever
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        include /etc/nginx/snippets/security-headers.conf;
+        try_files $uri =404;
+    }
+
+    location / {
+        try_files $uri /index.html;
+        add_header Cache-Control "no-cache" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+}
